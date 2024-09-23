@@ -15,8 +15,8 @@ pygame.mixer.init()
 # --------------------- Configuration ---------------------
 NUM_LANDMARKS = 42
 IMG_SIZE = 227
-MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT/models/asl_model.h5"  # Update with your model path
-LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT/data/labels/label_encoder.pkl"  # Update with your label encoder path
+MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5"  # Update with your model path
+LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"  # Update with your label encoder path
 SPEECH_DELAY = 3
 CONFIDENCE_THRESHOLD = 0.8
 AUDIO_FILE_LIFETIME = 3
