@@ -19,7 +19,7 @@ MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5"  # 
 LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"  # Update with your label encoder path
 SPEECH_DELAY = 3
 CONFIDENCE_THRESHOLD = 0.8
-AUDIO_FILE_LIFETIME = 0.03
+AUDIO_FILE_LIFETIME = 2
 DEBUG_FRAME_LIFETIME = 5
 UNKNOWN_LABEL = "unknown"
 # ----------------------------------------------------------
@@ -31,7 +31,7 @@ with open(LABEL_ENCODER_PATH, 'rb') as f:
 
 # Initialize MediaPipe Hands
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=1, min_detection_confidence=0.5)
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
 
 cap = cv2.VideoCapture(0)
 
@@ -42,15 +42,20 @@ previous_label = ""
 debug_frame_time = 0
 
 def play_audio(filename):
-    """Plays an audio file asynchronously and schedules it for deletion."""
     try:
+        print(f"[{time.time()}] Starting audio playback: {filename}")  # Log start
         pygame.mixer.music.load(filename)
         pygame.mixer.music.play()
-        while pygame.mixer.music.get_busy():
-            pygame.time.Clock().tick(10)
 
         delete_timer = threading.Timer(AUDIO_FILE_LIFETIME, os.remove, args=(filename,))
+        print(f"[{time.time()}] Created deletion timer for: {filename}")  # Log timer
         delete_timer.start()
+
+        while pygame.mixer.music.get_busy():  # Wait for playback 
+            pygame.time.Clock().tick(10) 
+
+        print(f"[{time.time()}] Audio playback finished: {filename}")  # Log finish
+
     except Exception as e:
         print(f"Error playing audio: {e}")
 
