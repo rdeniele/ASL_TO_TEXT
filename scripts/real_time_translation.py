@@ -19,7 +19,7 @@ MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5"  # 
 LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"  # Update with your label encoder path
 SPEECH_DELAY = 3
 CONFIDENCE_THRESHOLD = 0.8
-AUDIO_FILE_LIFETIME = 3
+AUDIO_FILE_LIFETIME = 0.03
 DEBUG_FRAME_LIFETIME = 5
 UNKNOWN_LABEL = "unknown"
 # ----------------------------------------------------------
