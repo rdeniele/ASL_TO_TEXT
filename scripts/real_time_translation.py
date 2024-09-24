@@ -140,8 +140,8 @@ while True:
             cv2.putText(frame, f"Prediction: {predicted_label} ({confidence * 100:.2f}%)",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-            normalized_image = (input_data[0] * 255).astype(np.uint8)
-            cv2.imshow("Normalized Hand", normalized_image)
+            # normalized_image = (input_data[0] * 255).astype(np.uint8)
+            # cv2.imshow("Normalized Hand", normalized_image)
 
     else:  # No hand detected
         cv2.putText(frame, f"Prediction: {predicted_label} ",
