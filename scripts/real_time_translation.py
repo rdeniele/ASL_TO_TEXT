@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # --------------------- Configuration ---------------------
 NUM_LANDMARKS = 42
-IMG_SIZE = 227  # You might be able to reduce this further
+IMG_SIZE = 227    # Input image size for the model
 MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5" 
 LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"  
 SPEECH_DELAY = 3
@@ -20,8 +20,8 @@ CONFIDENCE_THRESHOLD = 0.8
 AUDIO_FILE_LIFETIME = 2
 DEBUG_FRAME_LIFETIME = 5
 UNKNOWN_LABEL = "unknown"
-FRAME_WIDTH = 320  # Reduced frame width
-FRAME_HEIGHT = 240 # Reduced frame height
+FRAME_WIDTH = 600  
+FRAME_HEIGHT = 500 
 # ----------------------------------------------------------
 
 # Load trained model and label encoder
