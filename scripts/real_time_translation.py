@@ -8,20 +8,20 @@ import pygame
 import time
 import os
 from gtts import gTTS
-
-# Initialize pygame
-pygame.mixer.init()
+from concurrent.futures import ThreadPoolExecutor
 
 # --------------------- Configuration ---------------------
 NUM_LANDMARKS = 42
-IMG_SIZE = 227
-MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5"  # Update with your model path
-LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"  # Update with your label encoder path
+IMG_SIZE = 227  # You might be able to reduce this further
+MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5" 
+LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"  
 SPEECH_DELAY = 3
 CONFIDENCE_THRESHOLD = 0.8
 AUDIO_FILE_LIFETIME = 2
 DEBUG_FRAME_LIFETIME = 5
 UNKNOWN_LABEL = "unknown"
+FRAME_WIDTH = 320  # Reduced frame width
+FRAME_HEIGHT = 240 # Reduced frame height
 # ----------------------------------------------------------
 
 # Load trained model and label encoder
@@ -43,31 +43,29 @@ debug_frame_time = 0
 
 def play_audio(filename):
     try:
-        print(f"[{time.time()}] Starting audio playback: {filename}")  # Log start
+        print(f"[{time.time()}] Starting audio playback: {filename}") 
         pygame.mixer.music.load(filename)
         pygame.mixer.music.play()
 
         delete_timer = threading.Timer(AUDIO_FILE_LIFETIME, os.remove, args=(filename,))
-        print(f"[{time.time()}] Created deletion timer for: {filename}")  # Log timer
+        print(f"[{time.time()}] Created deletion timer for: {filename}") 
         delete_timer.start()
 
-        while pygame.mixer.music.get_busy():  # Wait for playback 
+        while pygame.mixer.music.get_busy(): 
             pygame.time.Clock().tick(10) 
 
-        print(f"[{time.time()}] Audio playback finished: {filename}")  # Log finish
+        print(f"[{time.time()}] Audio playback finished: {filename}") 
 
     except Exception as e:
         print(f"Error playing audio: {e}")
 
 def extract_landmarks(hand_landmarks):
-    """Extracts hand landmarks from MediaPipe results."""
     landmarks = []
     for lm in hand_landmarks.landmark:
         landmarks.append([lm.x, lm.y, lm.z])
     return landmarks
 
 def normalize_landmarks(landmarks):
-    """Normalize landmarks to be invariant to scale and translation."""
     x_coords = [lm[0] for lm in landmarks]
     y_coords = [lm[1] for lm in landmarks]
 
@@ -81,7 +79,6 @@ def normalize_landmarks(landmarks):
     return normalized_landmarks
 
 def preprocess_landmarks(landmarks, img_size=IMG_SIZE):
-    """Preprocess landmarks to create an input image compatible with the model."""
     normalized_landmarks = normalize_landmarks(landmarks)
 
     landmarks_image = np.zeros((img_size, img_size, 3), dtype=np.uint8)
@@ -93,7 +90,6 @@ def preprocess_landmarks(landmarks, img_size=IMG_SIZE):
     return np.expand_dims(landmarks_image, axis=0)
 
 class MovingAverageFilter:
-    """Applies a moving average filter to smooth predictions."""
     def __init__(self, window_size=3):
         self.window_size = window_size
         self.predictions = []
@@ -106,11 +102,17 @@ class MovingAverageFilter:
 
 ma_filter = MovingAverageFilter()
 
+# Thread pool for audio playback
+audio_executor = ThreadPoolExecutor(max_workers=2) 
+
 # Main Loop
 while True:
     ret, frame = cap.read()
     if not ret:
         break
+
+    # Resize the frame
+    frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
 
     frame = cv2.flip(frame, 1)
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -128,13 +130,10 @@ while True:
                 cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
 
             input_data = preprocess_landmarks(landmarks)
-
-            # Make prediction
             raw_predictions = model.predict(input_data)[0]
             filtered_predictions = ma_filter.update(raw_predictions)
             predicted_class_index = np.argmax(filtered_predictions)
 
-            # Get predicted label, handling potential IndexError
             try:
                 predicted_label = le.inverse_transform([predicted_class_index])[0]
             except IndexError:
@@ -145,14 +144,10 @@ while True:
             cv2.putText(frame, f"Prediction: {predicted_label} ({confidence * 100:.2f}%)",
                         (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-            # normalized_image = (input_data[0] * 255).astype(np.uint8)
-            # cv2.imshow("Normalized Hand", normalized_image)
-
-    else:  # No hand detected
+    else:  
         cv2.putText(frame, f"Prediction: {predicted_label} ",
                     (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-    # Text-to-Speech 
     current_time = time.time()
     if (predicted_label != previous_label and
         (current_time - last_speech_time) >= SPEECH_DELAY and
@@ -161,19 +156,16 @@ while True:
 
         tts = gTTS(text=predicted_label, lang='en')
         audio_filename = f"temp_{audio_file_counter}.mp3"
-        audio_temp_folder = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT/temp_files"  # Make sure this folder exists
+        audio_temp_folder = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT/temp_files" 
         save_path = os.path.join(audio_temp_folder, audio_filename)
         tts.save(save_path)
         audio_file_counter += 1
 
-        audio_thread = threading.Thread(target=play_audio, args=(save_path,))
-        audio_thread.daemon = True
-        audio_thread.start()
+        audio_executor.submit(play_audio, save_path) 
 
         last_speech_time = current_time
         previous_label = predicted_label
 
-    # Debug frame handling 
     if debug_frame_time and (time.time() - debug_frame_time) >= DEBUG_FRAME_LIFETIME:
         frame = np.zeros_like(frame)
         debug_frame_time = 0
@@ -188,4 +180,4 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
-
+audio_executor.shutdown() 
