@@ -23,6 +23,10 @@ UNKNOWN_LABEL = "unknown"
 FRAME_WIDTH = 600  
 FRAME_HEIGHT = 500 
 # ----------------------------------------------------------
+# initialize pygame mixer for my audio
+pygame.init()
+pygame.mixer.init()
+pygame.mixer.init(44100, -16, 2, 1024)
 
 # Load trained model and label encoder
 model = tf.keras.models.load_model(MODEL_PATH)
