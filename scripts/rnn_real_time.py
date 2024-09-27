@@ -12,7 +12,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 # Configuration
 NUM_LANDMARKS = 42
-IMG_SIZE = 227
+IMG_SIZE = 320
 SEQUENCE_LENGTH = 30
 MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/gesture_model.h5"
 LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/gesture_label_encoder.pkl"
