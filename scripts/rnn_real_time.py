@@ -72,10 +72,20 @@ def normalize_landmarks(landmarks):
 def preprocess_landmarks(landmarks, img_size=IMG_SIZE):
     normalized_landmarks = normalize_landmarks(landmarks)
     landmarks_image = np.zeros((img_size, img_size, 3), dtype=np.uint8)
+
+    if normalized_landmarks:  # Check if landmarks are detected
+        for connection in mp_hands.HAND_CONNECTIONS:
+            start_idx = connection[0]
+            end_idx = connection[1]
+            x1, y1 = int(normalized_landmarks[start_idx][0] * (img_size - 1)), int(normalized_landmarks[start_idx][1] * (img_size - 1))
+            x2, y2 = int(normalized_landmarks[end_idx][0] * (img_size - 1)), int(normalized_landmarks[end_idx][1] * (img_size - 1))
+            cv2.line(landmarks_image, (x1, y1), (x2, y2), (255, 255, 255), 2)
+
     for lm in normalized_landmarks:
         x, y = int(lm[0] * (img_size - 1)), int(lm[1] * (img_size - 1))
-        cv2.circle(landmarks_image, (x, y), 10, (255, 0, 0), 3)
-    return landmarks_image / 255.0
+        cv2.circle(landmarks_image, (x, y), 5, (255, 0, 0), 3)
+
+    return landmarks_image
 
 # Thread pool for audio playback
 audio_executor = ThreadPoolExecutor(max_workers=2)

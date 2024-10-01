@@ -12,18 +12,19 @@ from concurrent.futures import ThreadPoolExecutor
 
 # --------------------- Configuration ---------------------
 NUM_LANDMARKS = 42
-IMG_SIZE = 227    # Input image size for the model
-MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5" 
-LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"  
+IMG_SIZE = 227  # Input image size for the model
+MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5"
+LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"
 SPEECH_DELAY = 3
 CONFIDENCE_THRESHOLD = 0.8
 AUDIO_FILE_LIFETIME = 2
 DEBUG_FRAME_LIFETIME = 5
 UNKNOWN_LABEL = "unknown"
-FRAME_WIDTH = 600  
-FRAME_HEIGHT = 500 
+FRAME_WIDTH = 600
+FRAME_HEIGHT = 500
 # ----------------------------------------------------------
-# initialize pygame mixer for my audio
+
+# Initialize pygame mixer for audio
 pygame.init()
 pygame.mixer.init()
 pygame.mixer.init(44100, -16, 2, 1024)
@@ -35,7 +36,8 @@ with open(LABEL_ENCODER_PATH, 'rb') as f:
 
 # Initialize MediaPipe Hands
 mp_hands = mp.solutions.hands
-hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2, min_detection_confidence=0.5)
+hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2,
+                       min_detection_confidence=0.5)
 
 cap = cv2.VideoCapture(0)
 
@@ -45,20 +47,25 @@ last_speech_time = 0
 previous_label = ""
 debug_frame_time = 0
 
+
 def play_audio(filename):
     try:
-        print(f"[{time.time()}] Starting audio playback: {filename}") 
+        print(
+            f"[{time.time()}] Starting audio playback: {filename}")
         pygame.mixer.music.load(filename)
         pygame.mixer.music.play()
 
-        delete_timer = threading.Timer(AUDIO_FILE_LIFETIME, os.remove, args=(filename,))
-        print(f"[{time.time()}] Created deletion timer for: {filename}") 
+        delete_timer = threading.Timer(
+            AUDIO_FILE_LIFETIME, os.remove, args=(filename,))
+        print(
+            f"[{time.time()}] Created deletion timer for: {filename}")
         delete_timer.start()
 
-        while pygame.mixer.music.get_busy(): 
-            pygame.time.Clock().tick(10) 
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
 
-        print(f"[{time.time()}] Audio playback finished: {filename}") 
+        print(
+            f"[{time.time()}] Audio playback finished: {filename}")
 
     except Exception as e:
         print(f"Error playing audio: {e}")
@@ -84,11 +91,22 @@ def normalize_landmarks(landmarks):
 
 def preprocess_landmarks(landmarks, img_size=IMG_SIZE):
     normalized_landmarks = normalize_landmarks(landmarks)
-
     landmarks_image = np.zeros((img_size, img_size, 3), dtype=np.uint8)
+
+    if normalized_landmarks:
+        for connection in mp_hands.HAND_CONNECTIONS:
+            start_idx = connection[0]
+            end_idx = connection[1]
+            x1, y1 = int(normalized_landmarks[start_idx][0] * (img_size - 1)), int(
+                normalized_landmarks[start_idx][1] * (img_size - 1))
+            x2, y2 = int(normalized_landmarks[end_idx][0] * (img_size - 1)), int(
+                normalized_landmarks[end_idx][1] * (img_size - 1))
+            cv2.line(landmarks_image, (x1, y1),
+                     (x2, y2), (255, 255, 255), 2)
+
     for lm in normalized_landmarks:
         x, y = int(lm[0] * (img_size - 1)), int(lm[1] * (img_size - 1))
-        cv2.circle(landmarks_image, (x, y), 10, (255, 0, 0), 3)
+        cv2.circle(landmarks_image, (x, y), 5, (255, 0, 0), 3)
 
     landmarks_image = landmarks_image / 255.0
     return np.expand_dims(landmarks_image, axis=0)
