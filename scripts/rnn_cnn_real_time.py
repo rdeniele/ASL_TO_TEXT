@@ -13,19 +13,21 @@ from typing import Dict, List, Tuple
 
 # Configuration
 NUM_LANDMARKS = 42
-IMG_SIZE = 320
+IMG_SIZE = 224
 SEQUENCE_LENGTH = 30
 MODELS_CONFIG = {
     'cnn': {
-        'path': "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/gesture_model_cnn.h5",
-        'weight': 0.6  # Confidence weight for CNN model
+        'path': "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_mobilenet_model(1).h5",
+        'label_encoder': "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl",
+        'weight': 0.7  # Confidence weight for CNN model
     },
     'rnn': {
-        'path': "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/gesture_model_rnn.h5",
-        'weight': 0.4  # Confidence weight for RNN model
+        'path': "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/rnn_model.keras",
+        'label_encoder': "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/rnn_label_encoder.pkl",
+        'weight': 0.3  # Confidence weight for RNN model
     }
 }
-LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/gesture_label_encoder.pkl"
+
 SPEECH_DELAY = 3
 CONFIDENCE_THRESHOLD = 0.8
 AUDIO_FILE_LIFETIME = 2
@@ -38,9 +40,8 @@ class ASLDetector:
         pygame.init()
         pygame.mixer.init()
 
-        # Load models and label encoder
-        self.models = self._load_models()
-        self.le = self._load_label_encoder()
+        # Load models and label encoders
+        self.models, self.label_encoders = self._load_models_and_encoders()
 
         # Initialize MediaPipe Hands
         self.mp_hands = mp.solutions.hands
@@ -60,101 +61,98 @@ class ASLDetector:
         self.frame_sequence = deque(maxlen=SEQUENCE_LENGTH)
         self.audio_executor = ThreadPoolExecutor(max_workers=2)
 
-    def _load_models(self) -> Dict[str, tf.keras.Model]:
-        """Load all models specified in MODELS_CONFIG."""
+    def _load_models_and_encoders(self) -> Tuple[Dict[str, tf.keras.Model], Dict[str, object]]:
+        """Load all models and their corresponding label encoders."""
         models = {}
+        label_encoders = {}
+        
         for model_name, config in MODELS_CONFIG.items():
             try:
-                models[model_name] = tf.keras.models.load_model(config['path'])
-                print(f"Successfully loaded {model_name} model")
+                if os.path.exists(config['path']):
+                    models[model_name] = tf.keras.models.load_model(config['path'])
+                    print(f"Model {model_name} input shape:", models[model_name].input_shape)
+                else:
+                    print(f"Model file not found for {model_name}")
+
+                if os.path.exists(config['label_encoder']):
+                    with open(config['label_encoder'], 'rb') as f:
+                        label_encoders[model_name] = pickle.load(f)
+                    print(f"Successfully loaded {model_name} model and label encoder")
+                else:
+                    print(f"Label encoder file not found for {model_name}")
+                    
             except Exception as e:
-                print(f"Error loading {model_name} model: {e}")
+                print(f"Error loading {model_name} model or label encoder: {e}")
                 models[model_name] = None
-        return models
-
-    def _load_label_encoder(self):
-        """Load the label encoder."""
-        with open(LABEL_ENCODER_PATH, 'rb') as f:
-            return pickle.load(f)
-
-    def extract_landmarks(self, hand_landmarks) -> List[List[float]]:
-        """Extract landmarks from MediaPipe hand detection."""
-        return [[lm.x, lm.y, lm.z] for lm in hand_landmarks.landmark]
-
-    def normalize_landmarks(self, landmarks: List[List[float]]) -> List[List[float]]:
-        """Normalize landmark coordinates."""
-        x_coords = [lm[0] for lm in landmarks]
-        y_coords = [lm[1] for lm in landmarks]
-        min_x, max_x = min(x_coords), max(x_coords)
-        min_y, max_y = min(y_coords), max(y_coords)
+                label_encoders[model_name] = None
         
-        return [
-            [(x - min_x) / (max_x - min_x), (y - min_y) / (max_y - min_y), z]
-            for x, y, z in landmarks
-        ]
+        return models, label_encoders
 
-    def preprocess_landmarks(self, landmarks: List[List[float]], img_size: int = IMG_SIZE) -> np.ndarray:
-        """Convert landmarks to image representation."""
-        normalized_landmarks = self.normalize_landmarks(landmarks)
-        landmarks_image = np.zeros((img_size, img_size, 3), dtype=np.uint8)
+    def preprocess_for_cnn(self, image: np.ndarray) -> np.ndarray:
+        """Preprocess image for CNN model."""
+        image = cv2.resize(image, (IMG_SIZE, IMG_SIZE))
+        image = image.astype('float32') / 255.0
+        image = np.expand_dims(image, axis=0)
+        return image
 
-        if normalized_landmarks:
-            for connection in self.mp_hands.HAND_CONNECTIONS:
-                start_idx = connection[0]
-                end_idx = connection[1]
-                x1, y1 = int(normalized_landmarks[start_idx][0] * (img_size - 1)), int(normalized_landmarks[start_idx][1] * (img_size - 1))
-                x2, y2 = int(normalized_landmarks[end_idx][0] * (img_size - 1)), int(normalized_landmarks[end_idx][1] * (img_size - 1))
-                cv2.line(landmarks_image, (x1, y1), (x2, y2), (255, 255, 255), 2)
+    def preprocess_for_rnn(self, sequence: np.ndarray) -> np.ndarray:
+        """Preprocess sequence for RNN model."""
+        sequence = np.array(sequence)
+        sequence = sequence.astype('float32') / 255.0
+        return np.expand_dims(sequence, axis=0)
 
-            for lm in normalized_landmarks:
-                x, y = int(lm[0] * (img_size - 1)), int(lm[1] * (img_size - 1))
-                cv2.circle(landmarks_image, (x, y), 5, (255, 0, 0), 3)
-
-        return landmarks_image
-
-    def get_ensemble_prediction(self, input_data: np.ndarray) -> Tuple[str, float]:
-        """Combine predictions from multiple models."""
+    def get_ensemble_prediction(self, frame: np.ndarray, sequence: np.ndarray) -> Tuple[str, float]:
+        """Combine predictions from multiple models using their respective label encoders."""
         predictions = {}
         weights = {}
         
-        # Get predictions from each model
-        for model_name, model in self.models.items():
-            if model is not None:
-                pred = model.predict(input_data, verbose=0)[0]
-                predictions[model_name] = pred
-                weights[model_name] = MODELS_CONFIG[model_name]['weight']
+        # CNN Prediction
+        if self.models.get('cnn') is not None:
+            try:
+                cnn_input = self.preprocess_for_cnn(frame)
+                pred_cnn = self.models['cnn'].predict(cnn_input, verbose=0)[0]
+                predictions['cnn'] = pred_cnn
+                weights['cnn'] = MODELS_CONFIG['cnn']['weight']
+            except Exception as e:
+                print(f"Error in CNN prediction: {e}")
+
+        # RNN Prediction
+        if self.models.get('rnn') is not None:
+            try:
+                rnn_input = self.preprocess_for_rnn(sequence)
+                pred_rnn = self.models['rnn'].predict(rnn_input, verbose=0)[0]
+                predictions['rnn'] = pred_rnn
+                weights['rnn'] = MODELS_CONFIG['rnn']['weight']
+            except Exception as e:
+                print(f"Error in RNN prediction: {e}")
 
         if not predictions:
             return "unknown", 0.0
 
-        # Combine predictions using weighted average
-        combined_pred = np.zeros_like(predictions[list(predictions.keys())[0]])
-        total_weight = sum(weights.values())
-        
+        # Process predictions
+        final_predictions = {}
         for model_name, pred in predictions.items():
-            weight = weights[model_name] / total_weight
-            combined_pred += pred * weight
+            if self.label_encoders.get(model_name) is not None:
+                predicted_class_index = np.argmax(pred)
+                try:
+                    predicted_label = self.label_encoders[model_name].inverse_transform([predicted_class_index])[0]
+                    confidence = pred[predicted_class_index]
+                    final_predictions[predicted_label] = final_predictions.get(predicted_label, 0) + (confidence * weights[model_name])
+                except Exception as e:
+                    print(f"Error processing prediction for {model_name}: {e}")
 
-        predicted_class_index = np.argmax(combined_pred)
-        confidence = combined_pred[predicted_class_index]
+        if final_predictions:
+            predicted_label = max(final_predictions.items(), key=lambda x: x[1])
+            return predicted_label[0], predicted_label[1] / sum(weights.values())
+        
+        return "unknown", 0.0
 
-        try:
-            predicted_label = self.le.inverse_transform([predicted_class_index])[0]
-        except IndexError:
-            predicted_label = "unknown"
-
-        return predicted_label, confidence
-
-    def play_audio(self, filename: str):
-        """Play and clean up audio file."""
-        try:
-            pygame.mixer.music.load(filename)
-            pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy():
-                pygame.time.Clock().tick(10)
-            os.remove(filename)
-        except Exception as e:
-            print(f"Error playing audio: {e}")
+    def extract_landmarks(self, hand_landmarks) -> List[float]:
+        """Extract landmarks from hand landmarks."""
+        landmarks = []
+        for lm in hand_landmarks.landmark:
+            landmarks.extend([lm.x, lm.y, lm.z])
+        return landmarks
 
     def run(self):
         """Main detection loop."""
@@ -168,30 +166,34 @@ class ASLDetector:
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.hands.process(rgb_frame)
 
+            current_frame_preprocessed = None
+
             if results.multi_hand_landmarks:
                 for hand_landmarks in results.multi_hand_landmarks:
                     landmarks = self.extract_landmarks(hand_landmarks)
-                    preprocessed_image = self.preprocess_landmarks(landmarks)
-                    self.frame_sequence.append(preprocessed_image)
+                    self.frame_sequence.append(landmarks)
+                    current_frame_preprocessed = frame
 
-                    # Draw landmarks on frame
-                    for lm in landmarks:
-                        x = int(lm[0] * frame.shape[1])
-                        y = int(lm[1] * frame.shape[0])
-                        cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
+                    mp.solutions.drawing_utils.draw_landmarks(
+                        frame,
+                        hand_landmarks,
+                        self.mp_hands.HAND_CONNECTIONS,
+                        mp.solutions.drawing_utils.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=4),
+                        mp.solutions.drawing_utils.DrawingSpec(color=(0, 0, 255), thickness=2)
+                    )
 
-            # Make prediction if we have enough frames
-            if len(self.frame_sequence) == SEQUENCE_LENGTH:
-                input_data = np.expand_dims(np.array(self.frame_sequence), axis=0)
-                predicted_label, confidence = self.get_ensemble_prediction(input_data)
+            if current_frame_preprocessed is not None:
+                predicted_label, confidence = self.get_ensemble_prediction(
+                    current_frame_preprocessed,
+                    list(self.frame_sequence)
+                )
 
-                # Display predictions
                 cv2.putText(frame, f"Prediction: {predicted_label} ({confidence * 100:.2f}%)",
                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-                # Handle text-to-speech
                 current_time = time.time()
                 if (predicted_label != self.previous_label and 
+                    predicted_label != "unknown" and
                     (current_time - self.last_speech_time) >= SPEECH_DELAY and 
                     confidence >= CONFIDENCE_THRESHOLD):
                     
@@ -211,11 +213,20 @@ class ASLDetector:
 
         self.cleanup()
 
+    def play_audio(self, filename: str):
+        """Play an audio file asynchronously."""
+        pygame.mixer.music.load(filename)
+        pygame.mixer.music.play()
+        time.sleep(AUDIO_FILE_LIFETIME)
+        pygame.mixer.music.stop()
+        os.remove(filename)
+
     def cleanup(self):
         """Clean up resources."""
         self.cap.release()
         cv2.destroyAllWindows()
         self.audio_executor.shutdown()
+        pygame.quit()
 
 if __name__ == "__main__":
     detector = ASLDetector()

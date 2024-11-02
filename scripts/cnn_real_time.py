@@ -9,11 +9,12 @@ import time
 import os
 from gtts import gTTS
 from concurrent.futures import ThreadPoolExecutor
+from collections import deque
 
 # --------------------- Configuration ---------------------
 NUM_LANDMARKS = 42
-IMG_SIZE = 227  # Input image size for the model
-MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_model.h5"
+IMG_SIZE = 224  # Input image size for the model
+MODEL_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/models/asl_mobilenet_model.h5"
 LABEL_ENCODER_PATH = "C:/Users/ronde/PROJECTS/ASL_TO_TEXT_FILES/data/labels/label_encoder.pkl"
 SPEECH_DELAY = 3
 CONFIDENCE_THRESHOLD = 0.8
@@ -22,6 +23,7 @@ DEBUG_FRAME_LIFETIME = 5
 UNKNOWN_LABEL = "unknown"
 FRAME_WIDTH = 600
 FRAME_HEIGHT = 500
+VISUALIZATION_SIZE = 400  # Size for the preprocessing visualization
 # ----------------------------------------------------------
 
 # Initialize pygame mixer for audio
@@ -36,8 +38,10 @@ with open(LABEL_ENCODER_PATH, 'rb') as f:
 
 # Initialize MediaPipe Hands
 mp_hands = mp.solutions.hands
+mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(static_image_mode=False, max_num_hands=2,
-                       min_detection_confidence=0.5)
+                       min_detection_confidence=0.9,  # Increased confidence
+                       min_tracking_confidence=0.9) # Added tracking confidence
 
 cap = cv2.VideoCapture(0)
 
@@ -47,25 +51,21 @@ last_speech_time = 0
 previous_label = ""
 debug_frame_time = 0
 
+# Prediction smoothing using a deque 
+prediction_history = deque(maxlen=5) # Store last 5 predictions
 
 def play_audio(filename):
     try:
-        print(
-            f"[{time.time()}] Starting audio playback: {filename}")
+        print(f"[{time.time()}] Starting audio playback: {filename}")
         pygame.mixer.music.load(filename)
         pygame.mixer.music.play()
 
         delete_timer = threading.Timer(
             AUDIO_FILE_LIFETIME, os.remove, args=(filename,))
-        print(
-            f"[{time.time()}] Created deletion timer for: {filename}")
         delete_timer.start()
 
         while pygame.mixer.music.get_busy():
             pygame.time.Clock().tick(10)
-
-        print(
-            f"[{time.time()}] Audio playback finished: {filename}")
 
     except Exception as e:
         print(f"Error playing audio: {e}")
@@ -94,6 +94,7 @@ def preprocess_landmarks(landmarks, img_size=IMG_SIZE):
     landmarks_image = np.zeros((img_size, img_size, 3), dtype=np.uint8)
 
     if normalized_landmarks:
+        # Draw connections
         for connection in mp_hands.HAND_CONNECTIONS:
             start_idx = connection[0]
             end_idx = connection[1]
@@ -104,12 +105,17 @@ def preprocess_landmarks(landmarks, img_size=IMG_SIZE):
             cv2.line(landmarks_image, (x1, y1),
                      (x2, y2), (255, 255, 255), 2)
 
-    for lm in normalized_landmarks:
-        x, y = int(lm[0] * (img_size - 1)), int(lm[1] * (img_size - 1))
-        cv2.circle(landmarks_image, (x, y), 5, (255, 0, 0), 3)
+        # Draw landmark points
+        for lm in normalized_landmarks:
+            x, y = int(lm[0] * (img_size - 1)), int(lm[1] * (img_size - 1))
+            cv2.circle(landmarks_image, (x, y), 5, (255, 0, 0), 3)
 
-    landmarks_image = landmarks_image / 255.0
-    return np.expand_dims(landmarks_image, axis=0)
+    return landmarks_image, np.expand_dims(landmarks_image / 255.0, axis=0)
+
+# Simplified prediction smoothing
+def smooth_predictions(new_prediction):
+    prediction_history.append(new_prediction)
+    return np.mean(prediction_history, axis=0)
 
 class MovingAverageFilter:
     def __init__(self, window_size=3):
@@ -125,7 +131,11 @@ class MovingAverageFilter:
 ma_filter = MovingAverageFilter()
 
 # Thread pool for audio playback
-audio_executor = ThreadPoolExecutor(max_workers=2) 
+audio_executor = ThreadPoolExecutor(max_workers=2)
+
+# Create a named window for the preprocessing visualization
+cv2.namedWindow("Preprocessed Landmarks", cv2.WINDOW_NORMAL)
+cv2.resizeWindow("Preprocessed Landmarks", VISUALIZATION_SIZE, VISUALIZATION_SIZE)
 
 # Main Loop
 while True:
@@ -135,13 +145,15 @@ while True:
 
     # Resize the frame
     frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
-
     frame = cv2.flip(frame, 1)
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = hands.process(rgb_frame)
 
     predicted_label = UNKNOWN_LABEL
     confidence = 0.0
+    
+    # Create a black background for preprocessed visualization
+    preprocessed_viz = np.zeros((IMG_SIZE, IMG_SIZE, 3), dtype=np.uint8)
 
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
@@ -151,9 +163,12 @@ while True:
                 y = int(lm[1] * frame.shape[0])
                 cv2.circle(frame, (x, y), 5, (0, 255, 0), -1)
 
-            input_data = preprocess_landmarks(landmarks)
-            raw_predictions = model.predict(input_data)[0]
-            filtered_predictions = ma_filter.update(raw_predictions)
+            # Get both the visualization and model input
+            preprocessed_viz, input_data = preprocess_landmarks(landmarks)
+            
+            raw_predictions = model.predict(input_data, verbose=0)[0]
+            # filtered_predictions = ma_filter.update(raw_predictions)
+            filtered_predictions = smooth_predictions(raw_predictions)
             predicted_class_index = np.argmax(filtered_predictions)
 
             try:
@@ -163,12 +178,18 @@ while True:
 
             confidence = filtered_predictions[predicted_class_index]
 
-            cv2.putText(frame, f"Prediction: {predicted_label} ({confidence * 100:.2f}%)",
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+            # cv2.putText(frame, f"Prediction: {predicted_label} ({confidence * 100:.2f}%)",
+            #            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+            hand_label_position = (int(landmarks[0][0] * frame.shape[1]), int(landmarks[0][1] * frame.shape[0]) - 30)
+            cv2.putText(frame, f"{predicted_label} ({confidence * 100:.2f}%)",
+                        hand_label_position, cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
     else:  
-        cv2.putText(frame, f"Prediction: {predicted_label} ",
-                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+        cv2.putText(frame, f"Prediction: {predicted_label}",
+                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+
+    # Show the preprocessed landmarks visualization
+    cv2.imshow("Preprocessed Landmarks", preprocessed_viz)
 
     current_time = time.time()
     if (predicted_label != previous_label and
@@ -183,7 +204,7 @@ while True:
         tts.save(save_path)
         audio_file_counter += 1
 
-        audio_executor.submit(play_audio, save_path) 
+        audio_executor.submit(play_audio, save_path)
 
         last_speech_time = current_time
         previous_label = predicted_label
